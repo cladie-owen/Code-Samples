@@ -1,0 +1,1365 @@
+---
+title: "Untitled"
+author: "Joann Le, Owen Soccorso, and Benjamin Bekey"
+date: "2025-06-11"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(naniar)
+library(survey)
+library(readr)
+library(labelled)
+library(tidyverse)
+library(haven)
+library(gtsummary)
+library(srvyr)
+
+
+joann <- "/Users/joannle/Downloads/School/NYU PQAR/project/V4019 AREA STUDY Final Data 111822.dta"
+AREA_raw <- read_dta(joann)
+
+owen <- "~/Downloads/PQAR/PQAR 2025/V4019 AREA STUDY Final Data 111822.dta"
+AREA_raw<- read_dta(owen)
+
+ben <- "~/Desktop/Research/PQAR/project/code/V4019 AREA STUDY Final Data 111822.dta"
+AREA_raw<- read_dta(ben)
+
+```
+
+
+Turning 999 to NA's
+```{r}
+# code to search for 999s in the dataset and stores them in a list 
+# note that this is running for the uncleaned data
+Area_columns<- ncol(AREA_raw)
+missing_999 <-list()
+
+for (i in 1:Area_columns){
+  column <- AREA_raw[,i]
+  if(any(column==999, na.rm=TRUE)){
+  missing_999 <- c(missing_999,i)
+  }
+}
+
+# code to vectorize the list of columns with missing values
+unlisted_missing <- unlist(missing_999)
+
+unlisted_missing <- as.vector(unlisted_missing)
+unlisted_missing
+
+# just a check of the NA replacement function, identifying a row with 999 in column 6
+which(AREA_raw[,7]==5)
+AREA_raw[1022,6]
+
+# changes all the 999s to NA in the dataset
+for (i in unlisted_missing) {
+  idx <- which(AREA_raw[, i] == 999)
+  AREA_raw[idx, i] <- NA
+}
+
+# re-run of the check to confirm that it worked
+which(AREA_raw[,7]==5)
+AREA_raw[1022,6]
+```
+
+```{r}
+AREA_raw <- AREA_raw %>% 
+  mutate(
+   CC3 = case_when(
+      CC3 == 1 ~ 1,
+      CC3 == 2 ~ 2,
+      CC3 == 3 ~ 3,
+      CC3 == 4 ~ 4,
+      CC3 == 8 ~ NA_real_
+    )
+  )
+```
+
+Histogram of Survey Weights
+```{r}
+ggplot(AREA_raw) +
+  geom_histogram(aes(x=WEIGHT)) +theme_bw()
+```
+
+
+Cleaning DE Variables
+```{r}
+DE_var <- AREA_raw[1:37]
+DE_var[is.na(DE_var)] <- 0
+#miss_var_summary(DE_var)
+
+DE_var_new <- DE_var |>
+  mutate(Total_DE_1 = DE1_1 + DE1_2 + DE1_3 + DE1_4 + DE1_5 + DE1_6 + DE1_7 + DE1_8 + DE1_9 + DE1_000,
+         Total_DE_2 = DE2_1 + DE2_2 + DE2_3 + DE2_4 + DE2_5 + DE2_6 + DE2_7 + DE2_8 + DE2_9 + DE2_000,
+         Total_DE_3 = DE3_1 + DE3_2 + DE3_3 + DE3_4 + DE3_000) |> 
+  select(RESPID, Total_DE_1, Total_DE_2, Total_DE_3)
+
+AREA_raw <- AREA_raw|>
+  left_join(DE_var_new)
+```
+
+
+Combining the Children Variable
+```{r}
+# D3 = adult children
+table(AREA_raw$D3)      #1161
+# PParent = under 18
+table(AREA_raw$PPARENT) #143
+
+
+Child_var <- AREA_raw |>
+  select(RESPID, D3, PPARENT) |>
+  mutate(Children = case_when(D3 == 1 | PPARENT == 1 ~ "Yes",
+                              D3 == 2 & PPARENT == 2 ~ "No"))
+
+#table(Child_var$Children)
+
+
+AREA_raw <- AREA_raw |>
+  left_join(Child_var) 
+```
+
+
+Creating the Race Variable 
+```{r}
+table(AREA_raw$PRACE)
+
+
+AREA_raw <- AREA_raw |>
+  mutate(PRACE = case_when(PRACE == 1 ~ "White",
+                           PRACE == 2 ~ "Black", 
+                           PRACE == 3 ~ "Hispanic",
+                           PRACE == 4 ~ "Hispanic",
+                           PRACE == 5 ~ "Hispanic",
+                           PRACE == 6 ~ "Mixed/Other",
+                           PRACE == 7 ~ "Mixed/Other",
+                           PRACE == 8 ~ "Mixed/Other", 
+                           PRACE == 9 ~ "Mixed/Other", 
+                           PRACE == 10 ~ "Mixed/Other"))
+```
+
+
+Collapsing Political Views Variable
+```{r}
+table(AREA_raw$POLLEAN)
+table(AREA_raw$PPOLVIEW)    #PPOLVIEW has less missing
+
+
+AREA_raw <- AREA_raw |>
+  mutate(Pol_view = case_when(PPOLVIEW == 1 ~ "Conservative",
+                              PPOLVIEW == 2 ~ "Conservative",
+                              PPOLVIEW == 3 ~ "Moderate",
+                              PPOLVIEW == 4 ~ "Liberal",
+                              PPOLVIEW == 5 ~ "Liberal"))
+
+#table(AREA_raw$Pol_view)
+```
+
+
+PGENDER
+```{r}
+AREA_raw <- AREA_raw |>
+  mutate(PGENDER = case_when(PGENDER == 1 ~ "Male",
+                             PGENDER == 2 ~ "Female"))
+```
+
+
+Collapsing Home Categories
+```{r}
+#1: home
+#2: apartment
+#3: other
+
+
+AREA_raw <- AREA_raw %>% 
+  mutate(
+   PHOMETYPE = case_when(
+      PHOMETYPE == 1 ~ 3,
+      PHOMETYPE == 2 ~ 1,
+      PHOMETYPE == 3 ~ 1,
+      PHOMETYPE == 4 ~ 2,
+      PHOMETYPE == 5 ~ 2,
+      PHOMETYPE == 6 ~ 3,
+      PHOMETYPE == 7 ~ 3
+    )
+  )
+```
+
+
+Collapsing Income Categories
+```{r}
+AREA_raw <- AREA_raw %>%
+  mutate(
+    Z9A = case_when(
+      AREA_raw$Z9 %in% c(1:5,9)  ~ 1, 
+      AREA_raw$Z9 %in% c(6:7) ~ 2, 
+      AREA_raw$Z9 == 8 ~ 3,
+    )
+  )
+```
+
+
+Collapsing Education Categories
+```{r}
+#1: no HS degree
+#2: HS degree
+#3: some college no degree
+#4: 2 yr or 4 yr degree
+#5: postgrad/ professional degree
+
+
+AREA_raw <- AREA_raw %>% 
+  mutate(
+   Z8 = case_when(
+      Z8 == 1 ~ 1,
+      Z8 == 2 ~ 1,
+      Z8 == 3 ~ 2,
+      Z8 == 4 ~ 3,
+      Z8 == 5 ~ 4,
+      Z8 == 6 ~ 4,
+      Z8 == 7 ~ 4,
+      Z8 == 8 ~ 5
+    )
+  )
+```
+
+
+Unlabelling
+```{r}
+AREA_raw <- AREA_raw %>% unlabelled(.)
+```
+
+
+Creating Home Categories
+```{r}
+AREA_raw <- AREA_raw %>% 
+  mutate(
+   PHOMETYPE = case_when(
+      PHOMETYPE == 1 ~ "House",
+      PHOMETYPE == 2 ~ "Apartment",
+      PHOMETYPE == 3 ~ "Other"
+    )
+  )
+```
+
+```{r}
+AREA_raw <- AREA_raw %>% 
+  mutate(
+    CC3 = case_when(
+      CC3 == 1 ~ "Not at all",
+      CC3 == 2 ~ "Only a little",
+      CC3 == 3 ~ "A moderate amount",
+      CC3 == 4 ~ "A great deal"
+    )
+  )
+```
+
+
+Creating Income Categories
+```{r}
+AREA_raw <- AREA_raw %>% 
+  mutate(
+   Z9A = case_when(
+      Z9A == 1 ~ "Less than $50,000",
+      Z9A == 2 ~ "$50,000 to $100,000",
+      Z9A == 3 ~ "Over $100,000"
+    )
+  )
+```
+
+
+Marriage Status Changes
+```{r}
+AREA_raw <- AREA_raw %>% 
+  mutate(
+   PMSTATUS = case_when(
+      PMSTATUS == "Single, that is never married" ~ "Single",
+      PMSTATUS == "Single, living with a partner" ~ "Single",
+      PMSTATUS == "Separated" ~ "Separated",
+      PMSTATUS == "Divorced" ~ "Separated",
+      PMSTATUS == "Married" ~ "Married",
+      PMSTATUS == "Widowed" ~ "Widowed"))
+```
+
+
+Creating Education Categories
+```{r}
+AREA_raw <- AREA_raw %>% 
+  mutate(
+   Z8 = case_when(
+      Z8 == 1 ~ "No HS degree",
+      Z8 == 2 ~ "HS degree",
+      Z8 == 3 ~ "Some college, no degree",
+      Z8 == 4 ~ "2 year or 4 year degree",
+      Z8 == 5 ~ "Post-graduate or professional degree"
+    )
+  )
+```
+
+```{r}
+table(AREA_raw$S2A)
+table(AREA_raw$S2)
+```
+
+
+Creating Age Categories
+```{r}
+
+AREA_raw <- AREA_raw %>% 
+  mutate(
+   S2A = case_when(
+      AREA_raw$S2 >= 75 ~ "75 or older",
+      AREA_raw$S2 %in% c(65:74) ~ "65-74",
+      AREA_raw$S2 <= 64 ~ "50-64",
+      is.na(AREA_raw$S2) ~ "75 or older"
+    )
+  )
+
+#summary(AREA_raw$S2)
+
+#AREA_raw$S2A <- factor(AREA_raw$S2A, levels= c("1", "2", "3"), labels= c("50-64", "65-74", "75 or older"))
+# bar chart of all the ages
+
+ggplot(AREA_raw) + geom_bar(aes(x=S2A))
+```
+
+
+Storing the IDR Variables
+```{r}
+# stores all of the IDR variables
+
+IDR_vars <- c("IDR1_1", "IDR1_2","IDR1_3","IDR1_4","IDR1_5","IDR1_6","IDR1_7","IDR1_8",
+  "IDR1_9","IDR1_10","IDR1_11","IDR1_12","IDR1_13","IDR1_14","IDR1_15","IDR1_16", "IDR1_17","IDR1_18","IDR1_19","IDR1_20","IDR1_21","IDR1_22","IDR1_23","IDR1_24", "IDR1_25","IDR1_26","IDR1_27","IDR1_28","IDR1_29","IDR1_30","IDR1_31", "IDR1_32", "IDR1_33","IDR1_34","IDR1_35","IDR1_36","IDR1_37","IDR1_38","IDR1_39","IDR1_40","IDR1_41","IDR1_42","IDR1_43")
+
+#recodes all of the IDR variables from a 1-5 scale to a 0-4 scale
+# this aligns the scale to the one created by the auhtos of the DARS survey
+AREA_raw <- AREA_raw %>% 
+  mutate(
+    across(IDR_vars, ~ case_when(
+      .x == "Not true at all" ~ 0,
+      .x == "Rarely true" ~ 1,
+      .x == "Sometimes true" ~ 2,
+      .x == "Often true" ~ 3,
+      .x == "True nearly all of the time" ~ 4
+    ))
+  )
+```
+
+```{r}
+# Creates five new columns based on the average scores in each of the five factors that contribute to disaster resilience
+# these subcategories are:
+# PR: physical resources
+# SR: social resources
+# PS: problem solving
+# DR: distress regulation
+# O: optimism
+
+#Note that I exlcuded NA's because there weren't very many and I thought it could be easier to deal with later
+
+IDR_PR_vars <- c("IDR1_1", "IDR1_2","IDR1_3","IDR1_4","IDR1_5","IDR1_6","IDR1_7","IDR1_8", "IDR1_9")
+
+AREA_raw$IDR_PR <- rowMeans(AREA_raw[,IDR_PR_vars], na.rm=TRUE)
+
+IDR_SR_vars <- c("IDR1_10","IDR1_11","IDR1_12","IDR1_13","IDR1_14","IDR1_15","IDR1_16",
+              "IDR1_17","IDR1_18","IDR1_19")
+
+AREA_raw$IDR_SR <- rowMeans(AREA_raw[,IDR_SR_vars], na.rm=TRUE)
+
+IDR_PS_vars <- c("IDR1_20","IDR1_21","IDR1_22","IDR1_23","IDR1_24", "IDR1_25","IDR1_26","IDR1_27")
+
+AREA_raw$IDR_PS <- rowMeans(AREA_raw[,IDR_PS_vars], na.rm=TRUE)
+
+IDR_DR_vars <- c("IDR1_28","IDR1_29","IDR1_30","IDR1_31","IDR1_32", "IDR1_33","IDR1_34","IDR1_35","IDR1_36")
+
+AREA_raw$IDR_DR <- rowMeans(AREA_raw[,IDR_DR_vars], na.rm=TRUE) 
+
+IDR_O_vars <- c("IDR1_37","IDR1_38","IDR1_39","IDR1_40", "IDR1_41","IDR1_42","IDR1_43") 
+  
+AREA_raw$IDR_O <- rowMeans(AREA_raw[,IDR_O_vars], na.rm=TRUE) 
+
+```
+
+
+MICE - Multiple Imputation by Chained Equations
+```{r}
+library(mice)
+library(VIM)
+
+
+AREA_mice <- AREA_raw |>
+  select(S2A, PREGION, Children, PHOMETYPE, PRACE, Z8, Pol_view, Z9A, PMSTATUS, PGENDER, CC3, CC4, Total_DE_1, WEIGHT) 
+
+miss_var_summary(AREA_mice)
+md.pattern(AREA_mice, plot = TRUE, rotate.names = TRUE)
+aggr_plot <- aggr(AREA_mice, numbers=TRUE, sortVars=TRUE)
+
+AREA_mice <- AREA_mice |>
+  mutate_if(is.character, as.factor)
+#str(AREA_mice)
+
+AREA_mice <- unlabelled(AREA_mice)
+
+set.seed(1234)
+
+imp <- mice(AREA_mice, m=5, defaultMethod = c("norm", "logreg", "polr", "pmm"))
+
+
+completed_data <- complete(imp, action = 1)  # get the first imputed dataset
+miss_var_summary(completed_data)
+```
+
+```{r}
+summary(completed_data)
+```
+
+
+Building the Table
+```{r}
+Age <- "S2A"
+Gender <- "PGENDER"
+Region <- "PREGION"
+IDR <- c("IDR_PR", "IDR_SR", "IDR_PS", "IDR_DR", "IDR_O")
+Children <- "Children"
+Race <- "PRACE"
+Income <- "Z9A"
+Education <- "Z8"
+Politics <- "Pol_view"
+Marriage <- "PMSTATUS"
+Home <- "PHOMETYPE"
+
+
+demographic_cols <- c(Age, Gender, Region, Children, Home, Income, 
+          Politics, Marriage, Race, Education)
+
+AREA_raw[demographic_cols] <- lapply(AREA_raw[demographic_cols], addNA)
+AREA_raw[demographic_cols] <- lapply(AREA_raw[demographic_cols], function(x) {
+  x <- as.character(x)
+  x[is.na(x)] <- "NA"
+  x
+})
+```
+
+Unweighted Table
+```{r}
+table_one_unweighted <- AREA_raw %>%
+  mutate(across(c(Age,Gender,Region, Children,Home,Income, Politics, Marriage, Race, Education), ~ fct_infreq(.))) %>%
+  tbl_summary(include = c(Age,Gender,Region, Children,Home,Income, Politics, Marriage, Race, Education),
+    statistic = list(
+      all_continuous() ~ c("{mean} ({sd})"),
+      all_categorical() ~ "{n} ({p})"
+    ), 
+    digits = list(all_continuous() ~ 1,
+                  all_categorical() ~ c(0,1)), 
+    
+    missing = "ifany"
+    
+  )
+
+table_one_unweighted
+```
+
+Weighted Table
+```{r}
+AREA_raw <- AREA_raw %>%
+  mutate(across(c(Age, Gender, Region, Children, Home, Income, Politics, Marriage, Race, Education), ~ fct_infreq(.)))
+
+completed_data <- completed_data %>%
+  mutate(across(c(Age, Gender, Region, Children, Home, Income, Politics, Marriage, Race, Education), ~ fct_infreq(.)))
+
+weighted_data_mice <- svydesign(ids = ~1, data =  completed_data, weights = ~WEIGHT, nest=F) 
+
+overall_table <- weighted_data_mice  %>%
+  tbl_svysummary(include = c(Age,Gender,Region, Children,Home,Income, Politics, Marriage, Race, Education),
+                 type = all_dichotomous() ~ "categorical",
+                 statistic = list(
+                   all_continuous() ~ c("{mean} ({sd})"),
+                   all_categorical() ~ " {p}"
+                 ),
+                 digits = list(all_continuous() ~ 1,
+                               all_categorical() ~ 1),
+                 
+                 missing = "no")
+
+
+overall_table
+```
+
+
+Calculates confidence intervals for the weighted mice estimates
+```{r}
+
+
+results_list <- list()
+
+for (v in demographic_cols) {
+  
+  fml <- as.formula(paste0("~", v))
+  
+  svy_est <- survey::svymean(fml, design = weighted_data_mice, na.rm = TRUE)
+  conf_int <- confint(svy_est)  
+  
+  estimates <- coef(svy_est)
+  moe <- (conf_int[, 2] - conf_int[, 1]) / 2
+  
+  df <- data.frame(
+    Variable = v,
+    Category = names(estimates),
+    Estimate = round(estimates, 3),
+    MOE = round(moe, 3),
+    Estimate_CI = paste0(round(estimates, 3), " ± ", round(moe, 3)),
+    stringsAsFactors = FALSE
+  )
+  
+  results_list[[v]] <- df
+}
+
+final_results <- do.call(rbind, results_list)
+
+View(final_results)
+```
+
+```{r}
+survey::svymean(~S2A, design = weighted_data_mice)
+survey::svymean(~PGENDER, design = weighted_data_mice)
+survey::svymean(~PREGION, design = weighted_data_mice)
+survey::svymean(~Children, design = weighted_data_mice)
+survey::svymean(~PHOMETYPE, design = weighted_data_mice)
+survey::svymean(~Z9A, design = weighted_data_mice)
+survey::svymean(~Pol_view, design = weighted_data_mice)
+survey::svymean(~PMSTATUS, design = weighted_data_mice)
+survey::svymean(~PRACE, design = weighted_data_mice)
+survey::svymean(~Z8, design = weighted_data_mice)
+```
+
+
+
+
+Combining the Tables
+```{r}
+combined_table <- tbl_merge(tbls = list(table_one_unweighted, overall_table), tab_spanner = c("Unweighted", "Weighted"))
+combined_table
+
+owen_table <- "/Users/owensoccorso/Downloads/PQAR/PQAR 2025/table_1_area.csv"
+ben_table <- "/Users/bbekey/Desktop/Research/PQAR/project/code/table_1_area.csv"
+joann_table <- "/Users/joannle/Downloads/School/NYU PQAR/project/table_1_area.csv"
+
+write.csv(combined_table  %>% as.tibble() %>% replace(is.na(.), ""), owen_table)
+```
+
+
+Confidence Intervals
+```{r}
+svymean_S2 <- svymean(~S2, design = weighted_data_stratified, na.rm=T)
+confint(svymean_S2)
+```
+
+```{r}
+svymean_S2_1 <- svymean(~S2, design = weighted_data_overall, na.rm=T)
+confint(svymean_S2_1)
+```
+
+
+Turns character NAs back into real NAs
+```{r}
+AREA_raw[demographic_cols] <- lapply(AREA_raw[demographic_cols], function(x) {
+  x[x == "NA"] <- NA
+  return(x)
+})
+```
+
+
+Comparing the US Census Data against the Weighted Estimates -- Age, Sex, Region
+Source: https://data.census.gov/table/ACSST1Y2022.S0101?y=2022
+
+Age, against census data
+```{r}
+# sum each age group (census data)
+age_50_64_sum <- 20835521 + 20553615 + 21573853
+age_65_74_sum <- 18559497 + 15338575
+age_75_plus_sum <- 11005461 + 6758839 + 6758839
+
+# make a vector with the age group sums
+ages_vector <- c(age_50_64_sum, age_65_74_sum, age_75_plus_sum)
+
+# sum of age groups
+age_groups_total_sum <- age_50_64_sum + age_65_74_sum + age_75_plus_sum
+
+# get proportions
+ages_proportions_vector <- ages_vector/age_groups_total_sum
+
+ages_proportions_vector
+```
+
+Sex, against census data (note: census only has male/female)
+```{r}
+# sum each sex (census data)
+male_sum <- 10447394 + 10163454 + 10492488 + 8798968 + 7149850 + 4901587 + 2861152 + 2213087
+female_sum <- 10388127 + 10390161 + 11081365 + 9760529 + 8188725 + 6103874 + 3897687 + 3946856
+
+# make a vector with the age group sums
+sexes_vector <- c(male_sum, female_sum)
+
+# sum of sexes
+sexes_total_sum <- male_sum + female_sum
+
+# get proportions
+sexes_proportions_vector <- sexes_vector/sexes_total_sum
+
+sexes_proportions_vector
+```
+
+Region, against census data (note: census has "midwest", survey has "north central")
+```{r}
+# sum each region (census data)
+northeast_sum <- 3691006 + 3828912 + 3967827 + 3360107 + 2738006 + 1980514 + 1251999 + 1249382
+midwest_sum <- 4208377 + 4278524 + 4660937 + 3977115 + 3288834 + 2252873 + 1431054 + 1355606
+south_sum <- 8099936 + 7843393 + 8187523 + 7038752 + 5857973 + 4280727 + 2576002 + 2194242
+west_sum <- 4836202 + 4602786 + 4757566 + 4183523 + 3453762 + 2491347 + 1499784 + 1360713
+
+# make a vector with the region group sums
+regions_vector <- c(northeast_sum, midwest_sum, south_sum, west_sum)
+
+# sum of regions
+regions_total_sum <- northeast_sum + midwest_sum + south_sum + west_sum
+
+# get proportions
+regions_proportions_vector <- regions_vector/regions_total_sum
+
+regions_proportions_vector
+```
+
+
+Response Variable Visualizations
+
+CC3 - How much do you think climate change will harm future generations of people?
+```{r}
+#library(patchwork)
+#library(RColorBrewer) 
+
+# Before MICE
+
+# Income
+p01_cc3_beforeMICE <- ggplot(AREA_raw, aes(fill=Z9A, y =1, x = CC3)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title ="CC3 by Income") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Income")) +
+  theme_classic()
+p01_cc3_beforeMICE
+
+# Race
+p02_cc3_beforeMICE <- ggplot(AREA_raw, aes(fill=PRACE, y =1, x = CC3)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC3 by Race") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Race")) + 
+  theme_classic()
+p02_cc3_beforeMICE
+
+# Home Type
+p03_cc3_beforeMICE <- ggplot(AREA_raw, aes(fill=PHOMETYPE, y =1, x = CC3)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC3 by Home Type") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Home Type")) +
+  theme_classic()
+p03_cc3_beforeMICE
+
+# Children
+p04_cc3_beforeMICE <- ggplot(AREA_raw, aes(fill=Children, y =1, x = CC3)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC3 by Children") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Children")) +
+  theme_classic()
+p04_cc3_beforeMICE
+
+# Education
+p05_cc3_beforeMICE <- ggplot(AREA_raw, aes(fill=Z8, y =1, x = CC3)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC3 by Education") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Education")) +
+  theme_classic()
+p05_cc3_beforeMICE
+
+# Political View
+p06_cc3_beforeMICE <- ggplot(AREA_raw, aes(fill=Pol_view, y =1, x = CC3)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC3 by Political View") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Political View")) +
+  theme_classic()
+p06_cc3_beforeMICE
+
+# Gender
+p07_cc3_beforeMICE <- ggplot(AREA_raw, aes(fill=PGENDER, y =1, x = CC3)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC3 by Gender") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Gender")) +
+  theme_classic()
+p07_cc3_beforeMICE
+
+# Marital Status
+p08_cc3_beforeMICE <- ggplot(AREA_raw, aes(fill=PMSTATUS, y =1, x = CC3)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC3 by Marital Status") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Marital Status")) +
+  theme_classic()
+p08_cc3_beforeMICE
+
+# Age Group
+p09_cc3_beforeMICE <- ggplot(AREA_raw, aes(fill=S2A, y =1, x = CC3)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC3 by Age Group") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Age Group")) +
+  theme_classic()
+p09_cc3_beforeMICE
+
+# Region
+p10_cc3_beforeMICE <- ggplot(AREA_raw, aes(fill=PREGION, y =1, x = CC3)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC3 by Region") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Region")) +
+  theme_classic()
+p10_cc3_beforeMICE
+
+
+# After MICE
+
+# Income
+p01_cc3_afterMICE <- ggplot(completed_data, aes(fill=Z9A, y =1, x = CC3)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title ="CC3 by Income") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Income")) +
+  theme_classic()
+p01_cc3_afterMICE
+
+# Race
+p02_cc3_afterMICE <- ggplot(completed_data, aes(fill=PRACE, y =1, x = CC3)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC3 by Race") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Race")) + 
+  theme_classic()
+p02_cc3_afterMICE
+
+# Home Type
+p03_cc3_afterMICE <- ggplot(completed_data, aes(fill=PHOMETYPE, y =1, x = CC3)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC3 by Home Type") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Home Type")) + 
+  theme_classic()
+p03_cc3_afterMICE
+
+# Children
+p04_cc3_afterMICE <- ggplot(completed_data, aes(fill=Children, y =1, x = CC3)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC3 by Children") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Children")) +
+  theme_classic()
+p04_cc3_afterMICE
+
+# Education
+p05_cc3_afterMICE <- ggplot(completed_data, aes(fill=Z8, y =1, x = CC3)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC3 by Education") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Education")) +
+  theme_classic()
+p05_cc3_afterMICE
+
+# Political View
+p06_cc3_afterMICE <- ggplot(completed_data, aes(fill=Pol_view, y =1, x = CC3)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC3 by Political View") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Political View")) +
+  theme_classic()
+p06_cc3_afterMICE
+
+# Gender
+p07_cc3_afterMICE <- ggplot(completed_data, aes(fill=PGENDER, y =1, x = CC3)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC3 by Gender") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Gender")) +
+  theme_classic()
+p07_cc3_afterMICE
+
+# Marital Status
+p08_cc3_afterMICE <- ggplot(completed_data, aes(fill=PMSTATUS, y =1, x = CC3)) +
+  geom_bar(position = "fill", stat = "identity") +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC3 by Marital Status") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Marital Status")) +
+  theme_classic()
+p08_cc3_afterMICE
+
+# Age Group
+p09_cc3_afterMICE <- ggplot(completed_data, aes(fill=S2A, y =1, x = CC3)) +
+  geom_bar(position = "fill", stat = "identity")+
+  scale_x_discrete(guide = guide_axis(angle = 45))+
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC3 by Age Group") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Age Group")) +
+  theme_classic()
+p09_cc3_afterMICE
+
+# Region
+p10_cc3_afterMICE <- ggplot(completed_data, aes(fill=PREGION, y =1, x = CC3)) +
+  geom_bar(position = "fill", stat = "identity") +  
+  labs(x = NULL,
+       y = "Proportion", 
+       title = "CC3 by Region") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Region")) + 
+  theme_classic()
+p10_cc3_afterMICE
+```
+
+CC4 - How much, if anything would you be willing to change about how you live and work to help reduce
+the effects of climate change? 
+```{r}
+# Before MICE
+
+# Income
+p01_cc4_beforeMICE <- ggplot(AREA_raw, aes(fill=Z9A, y =1, x = CC4)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC4 by Income") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Income")) +
+  theme_classic()
+p01_cc4_beforeMICE
+
+# Race 
+p02_cc4_beforeMICE <- ggplot(AREA_raw, aes(fill=PRACE, y =1, x = CC4)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC4 by Race") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Race")) +
+  theme_classic()
+p02_cc4_beforeMICE
+
+# Home Type
+p03_cc4_beforeMICE <- ggplot(AREA_raw, aes(fill=PHOMETYPE, y =1, x = CC4)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC4 by Home Type") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Home Type")) +
+  theme_classic()
+p03_cc4_beforeMICE
+
+# Children
+p04_cc4_beforeMICE <- ggplot(AREA_raw, aes(fill=Children, y =1, x = CC4)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC4 by Children") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Children")) +
+  theme_classic()
+p04_cc4_beforeMICE
+
+# Education
+p05_cc4_beforeMICE <- ggplot(AREA_raw, aes(fill=Z8, y =1, x = CC4)) +
+  geom_bar(position = "fill", stat = "identity")+
+  scale_x_discrete(guide = guide_axis(angle = 45))+
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC4 by Education") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Education")) +
+  theme_classic()
+p05_cc4_beforeMICE
+
+# Political View
+p06_cc4_beforeMICE <- ggplot(AREA_raw, aes(fill=Pol_view, y =1, x = CC4)) +
+  geom_bar(position = "fill", stat = "identity")+
+  scale_x_discrete(guide = guide_axis(angle = 45))+
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC4 by Political View") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Political View")) +
+  theme_classic()
+p06_cc4_beforeMICE
+
+# Gender
+p07_cc4_beforeMICE <- ggplot(AREA_raw, aes(fill=PGENDER, y =1, x = CC4)) +
+  geom_bar(position = "fill", stat = "identity")+
+  scale_x_discrete(guide = guide_axis(angle = 45))+
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC4 by Gender") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Gender")) +
+  theme_classic()
+p07_cc4_beforeMICE
+
+# Marital Status
+p08_cc4_beforeMICE <- ggplot(AREA_raw, aes(fill=PMSTATUS, y =1, x = CC4)) +
+  geom_bar(position = "fill", stat = "identity") +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC4 by Marital Status") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Marital Status")) +
+  theme_classic()
+p08_cc4_beforeMICE
+
+# Age Groups
+p09_cc4_beforeMICE <- ggplot(AREA_raw, aes(fill=S2A, y =1, x = CC4)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC4 by Age Group") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Age Group")) +
+  theme_classic()
+p09_cc4_beforeMICE
+
+# Region
+p10_cc4_beforeMICE <- ggplot(AREA_raw, aes(fill=PREGION, y =1, x = CC4)) +
+  geom_bar(position = "fill", stat = "identity") +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC4 by Region") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Region")) +
+  theme_classic()
+p10_cc4_beforeMICE
+
+
+# After MICE
+
+# Income
+p01_cc4_afterMICE <- ggplot(completed_data, aes(fill=Z9A, y =1, x = CC4)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title ="CC4 by Income") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Income")) +
+  theme_classic()
+p01_cc4_afterMICE
+
+# Race
+p02_cc4_afterMICE <- ggplot(completed_data, aes(fill=PRACE, y =1, x = CC4)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC4 by Race") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Race")) +
+  theme_classic()
+p02_cc4_afterMICE
+
+# Home Type
+p03_cc4_afterMICE <- ggplot(completed_data, aes(fill=PHOMETYPE, y =1, x = CC4)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) + 
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC4 by Home Type") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Home Type")) +
+  theme_classic()
+p03_cc4_afterMICE
+
+# Children
+p04_cc4_afterMICE <- ggplot(completed_data, aes(fill=Children, y =1, x = CC4)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC4 by Children") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Children")) +
+  theme_classic()
+p04_cc4_afterMICE
+
+# Education
+p05_cc4_afterMICE <- ggplot(completed_data, aes(fill=Z8, y =1, x = CC4)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC4 by Education") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Education")) +
+  theme_classic()
+p05_cc4_afterMICE
+
+# Political View
+p06_cc4_afterMICE <- ggplot(completed_data, aes(fill=Pol_view, y =1, x = CC4)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC4 by Political View") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Political View")) +
+  theme_classic()
+p06_cc4_afterMICE
+
+# Gender
+p07_cc4_afterMICE <- ggplot(completed_data, aes(fill=PGENDER, y =1, x = CC4)) +
+  geom_bar(position = "fill", stat = "identity") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC4 by Gender") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Gender")) +
+  theme_classic()
+p07_cc4_afterMICE
+
+# Marital Status
+p08_cc4_afterMICE <- ggplot(completed_data, aes(fill=PMSTATUS, y =1, x = CC4)) +
+  geom_bar(position = "fill", stat = "identity") +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC4 by Marital Status") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Marital Status")) +
+  theme_classic()
+p08_cc4_afterMICE
+
+# Age Group
+p09_cc4_afterMICE <- ggplot(completed_data, aes(fill=S2A, y =1, x = CC4)) +
+  geom_bar(position = "fill", stat = "identity")+
+  scale_x_discrete(guide = guide_axis(angle = 45))+
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC4 by Age Group") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Age Group")) +
+  theme_classic()
+p09_cc4_afterMICE
+
+# Region
+p10_cc4_afterMICE <- ggplot(completed_data, aes(fill=PREGION, y =1, x = CC4)) +
+  geom_bar(position = "fill", stat = "identity") +
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC4 by Region") +
+  scale_fill_viridis_d() +
+  guides(fill = guide_legend(title = "Region")) +
+  theme_classic()
+p10_cc4_afterMICE
+```
+
+Combining the Plots
+```{r}
+# plots for the significant predictors
+cc3_plot_polview <- p06_cc3_beforeMICE+p06_cc3_afterMICE
+cc3_plot_gender <- p07_cc3_beforeMICE+p07_cc3_afterMICE
+cc3_plot_raceeth <- p02_cc3_beforeMICE+p02_cc3_afterMICE
+cc3_plot_age <- p09_cc3_beforeMICE+p09_cc3_afterMICE
+
+cc4_plot_polview <- p06_cc4_beforeMICE+p06_cc4_afterMICE
+cc4_plot_gender <- p07_cc4_beforeMICE+p07_cc4_afterMICE
+cc4_plot_raceeth <- p02_cc4_beforeMICE+p02_cc4_afterMICE
+cc4_plot_age <- p09_cc4_beforeMICE+p09_cc4_afterMICE
+```
+
+CC3 and CC4 Distribution
+```{r}
+cc3_responses_plot <- ggplot(weighted_data_mice) +
+  geom_bar(aes(CC3, fill=CC3))+
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC3 Response Distribution") +
+  scale_x_discrete(limits = c("A great deal", "A moderate amount", "Only a little", "Not at all"), guide = guide_axis(angle = 45)) +
+  scale_fill_viridis_d()+
+  theme_classic()
+
+cc4_responses_plot <- ggplot(weighted_data_mice) +
+  geom_bar(aes(CC4, fill=CC4))+
+  labs(x = NULL,
+       y = "Proportion",
+       title = "CC4 Response Distribution") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) +
+  scale_fill_viridis_d()+
+  theme_classic()
+
+# old code for plot
+#raceeth_cc3_p1 <- ggplot(AREA_raw, aes(PRACE)) +
+  #geom_bar(aes(fill=PRACE)) +
+  #facet_wrap(vars(CC3)) +
+  #geom_text(stat='count', aes(label=after_stat(count)), vjust = -0.05, na.rm=F) +
+  #labs(fill = "race/ethnicity", 
+       #title = "CC3 responses by race/ethnicity (before MICE)", 
+       #x = "race/ethnicity") +
+ # theme(axis.text.x=element_blank(), #remove x axis labels
+       # axis.ticks.x=element_blank(), #remove x axis ticks
+        #axis.text.y=element_blank(),  #remove y axis labels
+        #axis.ticks.y=element_blank()  #remove y axis ticks
+       # )
+```
+
+
+Converting the Response Variables back to Numerical for Analysis
+```{r}
+AREA_raw <- AREA_raw %>% 
+  mutate(
+    CC3 = as.character(CC3),
+    CC3 = case_when(
+      CC3 == "Not at all" ~ 1,
+      CC3 == "Only a little" ~ 2,
+      CC3 == "A moderate amount" ~ 3,
+      CC3 == "A great deal" ~ 4,
+      CC3 == "Don't know" ~ NA_real_,
+      TRUE ~ NA_real_
+   )
+  )
+
+weighted_data_mice$variables <- weighted_data_mice$variables %>% 
+  mutate(
+    CC3 = as.character(CC3),
+    CC3 = case_when(
+      CC3 == "Not at all" ~ 1,
+      CC3 == "Only a little" ~ 2,
+      CC3 == "A moderate amount" ~ 3,
+      CC3 == "A great deal" ~ 4
+    )
+  )
+
+```
+
+
+```{r}
+
+weighted_data_cca <- svydesign(ids = ~1, data =  AREA_raw, weights = ~WEIGHT, nest=F)
+
+unweighted_CC3_model <-lm(CC3~S2A+PGENDER+PREGION+Children+PRACE+Z9A+Z8+Pol_view+PMSTATUS+PHOMETYPE+Total_DE_1, data=AREA_raw, na.action = na.omit)
+
+weighted_cca_CC3_model <- lm(CC3~S2A+PGENDER+PREGION+Children+PRACE+Z9A+Z8+Pol_view+PMSTATUS+PHOMETYPE+Total_DE_1, data=weighted_data_cca$variables, na.action = na.omit)
+
+
+
+weighted_mice_CC3_model <- lm(CC3~S2A+PGENDER+PREGION+Children+PRACE+Z9A+Z8+Pol_view+PMSTATUS+PHOMETYPE+Total_DE_1, data=weighted_data_mice$variables)
+
+
+
+unweighted_table_two_CC3 <- unweighted_CC3_model %>% 
+  tbl_regression(exponentiate = F,
+                 estimate_fun = purrr::partial(style_ratio, digits = 2),
+                 pvalue_fun = purrr::partial(style_sigfig, digits = 2),
+                 conf.int=TRUE) %>% 
+  bold_p(t = 0.05)
+
+weighted_cca_table_two_CC3 <- weighted_cca_CC3_model %>% 
+  tbl_regression(exponentiate = F,
+                 estimate_fun = purrr::partial(style_ratio, digits = 2),
+                 pvalue_fun = purrr::partial(style_sigfig, digits = 2),
+                 conf.int=TRUE) %>% 
+  bold_p(t = 0.05)
+
+
+
+weighted_mice_table_two_CC3 <- weighted_mice_CC3_model %>% 
+  tbl_regression(exponentiate = F,
+                 estimate_fun = purrr::partial(style_ratio, digits = 2),
+                pvalue_fun = purrr::partial(style_sigfig, digits = 2),
+                 conf.int=TRUE) %>% 
+  bold_p(t = 0.05)
+
+combined_table_2_CC3 <- tbl_merge(tbls = list(unweighted_table_two_CC3, weighted_cca_table_two_CC3, weighted_mice_table_two_CC3), tab_spanner = c("Unweighted", "Weighted CCA", "Weighted MICE"))
+combined_table_2_CC3
+
+owen_table_2_CC3 <- "/Users/owensoccorso/Downloads/PQAR/PQAR 2025/CC3_table_2_area.csv"
+
+write.csv(combined_table_2_CC3  %>% as.tibble() %>% replace(is.na(.), ""), owen_table_2_CC3)
+```
+
+
+```{r}
+AREA_raw <- AREA_raw %>% 
+  mutate(
+    CC4 = as.character(CC4),
+    CC4 = case_when(
+      CC4 == "No changes at all" ~ 1,
+      CC4 == "Only a few changes" ~ 2,
+      CC4 == "Some changes" ~ 3,
+      CC4 == "A lot of changes" ~ 4,
+      CC4 == "Don't know/Refused/Prefer not to answer" ~ NA_real_,
+      TRUE ~ NA_real_
+    )
+  )
+
+weighted_data_mice$variables <- weighted_data_mice$variables %>% 
+  mutate(
+    CC4 = as.character(CC4),
+    CC4 = case_when(
+      CC4 == "No changes at all" ~ 1,
+      CC4 == "Only a few changes" ~ 2,
+      CC4 == "Some changes" ~ 3,
+      CC4 == "A lot of changes" ~ 4,
+      CC4 == "Don't know/Refused/Prefer not to answer" ~ NA_real_,
+      TRUE ~ NA_real_
+    )
+  )
+
+weighted_data_cca$variables <- weighted_data_cca$variables %>% 
+  mutate(
+    CC4 = as.character(CC4),
+    CC4 = case_when(
+      CC4 == "No changes at all" ~ 1,
+      CC4 == "Only a few changes" ~ 2,
+      CC4 == "Some changes" ~ 3,
+      CC4 == "A lot of changes" ~ 4,
+      CC4 == "Don't know/Refused/Prefer not to answer" ~ NA_real_,
+      TRUE ~ NA_real_
+    )
+  )
+```
+
+```{r}
+unweighted_CC4_model <-lm(CC4~S2A+PGENDER+PREGION+Children+PRACE+Z9A+Z8+Pol_view+PMSTATUS+PHOMETYPE+Total_DE_1, data=AREA_raw, na.action = na.omit)
+
+weighted_mice_CC4_model <- lm(CC4~S2A+PGENDER+PREGION+Children+PRACE+Z9A+Z8+Pol_view+PMSTATUS+PHOMETYPE+Total_DE_1, data=weighted_data_mice$variables, na.action = na.omit)
+
+weighted_cca_CC4_model <- lm(CC4~S2A+PGENDER+PREGION+Children+PRACE+Z9A+Z8+Pol_view+PMSTATUS+PHOMETYPE+Total_DE_1, data=weighted_data_cca$variables, na.action = na.omit)
+
+
+summary(unweighted_CC4_model)
+summary(unweighted_CC3_model)
+summary(weighted_cca_model)
+summary(weighted_mice_model)
+
+unweighted_table_two_CC4 <- unweighted_CC4_model %>% 
+  tbl_regression(exponentiate = F,
+                 estimate_fun = purrr::partial(style_ratio, digits = 2),
+                 pvalue_fun = purrr::partial(style_sigfig, digits = 2),
+                 conf.int=TRUE) %>% 
+  bold_p(t = 0.05)
+
+weighted_mice_table_two_CC4 <- weighted_mice_CC4_model %>% 
+  tbl_regression(exponentiate = F,
+                 estimate_fun = purrr::partial(style_ratio, digits = 2),
+                 pvalue_fun = purrr::partial(style_sigfig, digits = 2),
+                 conf.int=TRUE) %>% 
+  bold_p(t = 0.05)
+
+
+
+weighted_cca_table_two_CC4 <- weighted_cca_CC4_model %>% 
+  tbl_regression(exponentiate = F,
+                 estimate_fun = purrr::partial(style_ratio, digits = 2),
+                pvalue_fun = purrr::partial(style_sigfig, digits = 2),
+                 conf.int=TRUE) %>% 
+  bold_p(t = 0.05)
+
+combined_table_2_CC4 <- tbl_merge(tbls = list(unweighted_table_two_CC4, weighted_cca_table_two_CC4, weighted_mice_table_two_CC4), tab_spanner = c("Unweighted", "Weighted CCA", "Weighted MICE"))
+combined_table_2_CC4
+
+owen_table_2_CC4 <- "/Users/owensoccorso/Downloads/PQAR/PQAR 2025/CC4_table_2_area.csv"
+
+write.csv(combined_table_2_CC4  %>% as.tibble() %>% replace(is.na(.), ""), owen_table_2_CC4)
+```
+
+
+Combining the Plots After Analysis
+```{r}
+# plots for the significant predictors
+cc3_plot_polview <- p06_cc3_beforeMICE+p06_cc3_afterMICE
+cc3_plot_gender <- p07_cc3_beforeMICE+p07_cc3_afterMICE
+cc3_plot_raceeth <- p02_cc3_beforeMICE+p02_cc3_afterMICE
+cc3_plot_age <- p09_cc3_beforeMICE+p09_cc3_afterMICE
+
+cc4_plot_polview <- p06_cc4_beforeMICE+p06_cc4_afterMICE
+cc4_plot_gender <- p07_cc4_beforeMICE+p07_cc4_afterMICE
+cc4_plot_raceeth <- p02_cc4_beforeMICE+p02_cc4_afterMICE
+cc4_plot_age <- p09_cc4_beforeMICE+p09_cc4_afterMICE
+```
+
+
